@@ -1,0 +1,1 @@
+/home/wjl/workspace/kernel-6.12/scripts/gdb/vmlinux-gdb.py
