@@ -24,7 +24,7 @@
 #include <linux/unicode.h>
 #include <linux/fscrypt.h>
 #include <linux/pidfs.h>
-
+#include <linux/time.h>
 #include <linux/uaccess.h>
 
 #include "internal.h"
@@ -764,7 +764,62 @@ EXPORT_SYMBOL(simple_empty);
 int simple_unlink(struct inode *dir, struct dentry *dentry)
 {
 	struct inode *inode = d_inode(dentry);
-
+#define Lenny_PRINT_UNLINK
+#ifdef Lenny_PRINT_UNLINK
+	char *fname;
+	u64 ttnow, ctime;
+	struct timespec64 tv_now, ctime_inode;
+	char *ss;
+	
+	// 空指针安全检查
+	if (dentry && !IS_ERR(dentry) && dentry->d_inode) {
+		// 使用GFP_KERNEL_ACCOUNT替代原生GFP_KERNEL（6.12推荐）
+		fname = (char *)kmalloc(sizeof(char) * 4096, GFP_KERNEL_ACCOUNT);
+		if (!fname) { // 内存分配失败检查
+			return -ENOMEM;
+		}
+		
+		// dentry_path_raw在6.12中仍可用，但增加返回值检查
+		ss = dentry_path_raw(dentry, fname, 4096);
+		if (ss && fname[0] != '\0') { // 路径有效性检查
+			struct super_block *sb = dentry->d_inode->i_sb;
+			// 安全访问文件系统类型名称
+			if (sb && sb->s_type && sb->s_type->name) {
+				// 6.12中推荐使用ktime_get_real_ts64替代do_gettimeofday
+				ktime_get_real_ts64(&tv_now);
+				// 计算当前时间(us)
+				ttnow = (u64)tv_now.tv_sec * 1000000 + tv_now.tv_nsec / 1000;
+				
+				// 6.12中inode时间戳统一使用timespec64
+				ctime_inode = inode_get_ctime(dentry->d_inode);
+				// 计算文件创建时间(us)
+				ctime = (u64)ctime_inode.tv_sec * 1000000 + ctime_inode.tv_nsec / 1000;
+				
+				// 安全访问current相关字段（RCU保护）
+				rcu_read_lock();
+				printk(KERN_ALERT "->%llu,unlink,ramfs,%s,%llu,%llu,%u,%d,%s\n", 
+					   // 1. 毫秒级时间戳（%llu 匹配 u64）
+					   (u64)tv_now.tv_sec * 1000 + tv_now.tv_nsec / 1000000,
+					   // 2. 文件路径（%s 匹配 char*）
+					   ss,
+					   // 3. 存在时长(us)（%llu 匹配 u64）
+					   ttnow - ctime,
+					   // 4. 文件大小（%llu 匹配 u64）
+					   (u64)i_size_read(dentry->d_inode),
+					   // 5. inode号（%llu 匹配 u64）
+					   (u64)dentry->d_inode->i_ino,
+					   // 6. PID（%u 匹配 pid_t/unsigned int）
+					   (unsigned long)task_pid_nr(current), // 当前进程PID
+					   // 7. PID（%d 匹配 int，兼容旧格式）
+					   (int)current->pid,
+					   // 8. 进程名（%s 匹配 char[]）
+					   current->comm);
+				rcu_read_unlock();
+			}
+		}
+		kfree(fname); // 释放内存
+	}
+#endif
 	inode_set_mtime_to_ts(dir,
 			      inode_set_ctime_to_ts(dir, inode_set_ctime_current(inode)));
 	drop_nlink(inode);

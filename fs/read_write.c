@@ -481,6 +481,49 @@ static ssize_t new_sync_read(struct file *filp, char __user *buf, size_t len, lo
 	struct kiocb kiocb;
 	struct iov_iter iter;
 	ssize_t ret;
+#define CONFIG_Lenny_TRACE_READ
+#ifdef CONFIG_Lenny_TRACE_READ
+        // if (current->cred->uid.val == 10086) //filter app by using uid of youtube
+	// {
+	struct timespec64 tv;  // 6.1内核推荐使用timespec64替代timeval
+	char *fname;
+	const char *ss;        // dentry_path_raw返回const char*
+	if (filp != NULL && filp->f_path.dentry != NULL) {                      
+		// 使用GFP_KERNEL_ACCOUNT替代纯GFP_KERNEL（6.1推荐）
+		fname = kmalloc(4096, GFP_KERNEL_ACCOUNT);
+		if (!fname) {  // 增加内存分配失败检查
+			return ret;  // 根据上下文调整，也可以用goto
+		}
+		// dentry_path_raw接口在6.1中无变化，但返回值类型为const
+		ss = dentry_path_raw(filp->f_path.dentry, fname, 4096);
+		if (ss && (strncmp(ss, "/data/", 6) == 0 || 
+		           strncmp(ss, "/app/", 5) == 0 || 
+		           strncmp(ss, "/media/", 7) == 0)) {
+			if (current != NULL) {
+				// 6.1内核中do_gettimeofday已废弃，使用ktime_get_real_ts64
+				ktime_get_real_ts64(&tv);
+				// 计算毫秒时间戳（timespec64是秒+纳秒）
+				u64 timestamp = (u64)tv.tv_sec * 1000 + tv.tv_nsec / 1000000;
+				
+				// 增加inode指针空指针检查
+				if (filp->f_inode) {
+					printk(KERN_ALERT "->%llu,vfs_r,%s,%lu,%lld,%lld,%lu,%d,%s\n",
+					       timestamp,
+					       ss, 
+					       (unsigned long)len,  // 确保len类型匹配
+					       (unsigned long long)i_size_read(filp->f_inode), // 6.1推荐使用i_size_read
+					       (long long)*ppos, 
+					       (unsigned long long)filp->f_inode->i_ino,
+					       (unsigned long)task_pid_nr(current), // 6.1推荐使用task_pid_nr
+					       (int)current->pid, 
+					       current->comm);
+				}
+			}
+		} // directory filter
+		kfree(fname);                     
+	} //dentry filter
+	// }// uid filter
+#endif
 
 	init_sync_kiocb(&kiocb, filp);
 	kiocb.ki_pos = (ppos ? *ppos : 0);
@@ -583,7 +626,48 @@ static ssize_t new_sync_write(struct file *filp, const char __user *buf, size_t 
 	struct kiocb kiocb;
 	struct iov_iter iter;
 	ssize_t ret;
-
+#define CONFIG_Lenny_TRACE_WRITE
+#ifdef CONFIG_Lenny_TRACE_WRITE
+    //     if (from_kuid(&init_user_ns, current_euid()) == 10086) // 6.1适配的UID过滤
+	// {
+		struct timespec64 tv;  // 替换废弃的timeval
+		char *fname;
+		const char *ss;        // 6.1修正的返回值类型
+		if (filp != NULL && filp->f_path.dentry != NULL) {                       
+			// 内存分配增加失败检查，使用推荐的GFP标志
+			fname = kmalloc(PATH_MAX, GFP_KERNEL_ACCOUNT);
+			if (!fname) {
+				return ret;  // 根据上下文调整，也可用goto清理
+			}
+			
+			// 获取文件路径（保持接口但修正类型）
+			ss = dentry_path_raw(filp->f_path.dentry, fname, PATH_MAX); 
+			if (ss && (strncmp(ss, "/data/", 6) == 0 || 
+			           strncmp(ss, "/app/", 5) == 0 || 
+			           strncmp(ss, "/media/", 7) == 0)) {
+				
+				if (current != NULL && filp->f_inode) {  // 增加inode空指针检查
+					// 替换废弃的do_gettimeofday
+					ktime_get_real_ts64(&tv);
+					u64 timestamp = (u64)tv.tv_sec * 1000 + tv.tv_nsec / 1000000;
+					
+					// 类型强转保证格式符匹配，使用6.1推荐的接口
+					printk(KERN_ALERT "->%llu,vfs_w,%s,%lu,%lld,%lld,%lu,%d,%s\n",
+						   timestamp,
+						   ss, 
+						   (unsigned long)len, 
+						   (unsigned long long)i_size_read(filp->f_inode), // 原子读取inode大小
+						   (long long)*ppos, 
+						   (unsigned long long)filp->f_inode->i_ino,
+						   (unsigned long)task_pid_nr(current), // 6.1推荐的PID获取
+						   (int)current->pid, 
+						   current->comm);
+				}
+			} // directory filter
+			kfree(fname);                        
+		} //dentry filter
+	// }// uid filter
+#endif
 	init_sync_kiocb(&kiocb, filp);
 	kiocb.ki_pos = (ppos ? *ppos : 0);
 	iov_iter_ubuf(&iter, ITER_SOURCE, (void __user *)buf, len);
