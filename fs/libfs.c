@@ -770,7 +770,6 @@ int simple_unlink(struct inode *dir, struct dentry *dentry)
 	u64 ttnow, ctime;
 	struct timespec64 tv_now, ctime_inode;
 	char *ss;
-	
 	// 空指针安全检查
 	if (dentry && !IS_ERR(dentry) && dentry->d_inode) {
 		// 使用GFP_KERNEL_ACCOUNT替代原生GFP_KERNEL（6.12推荐）
@@ -778,10 +777,9 @@ int simple_unlink(struct inode *dir, struct dentry *dentry)
 		if (!fname) { // 内存分配失败检查
 			return -ENOMEM;
 		}
-		
 		// dentry_path_raw在6.12中仍可用，但增加返回值检查
-		ss = dentry_path_raw(dentry, fname, 4096);
-		if (ss && fname[0] != '\0') { // 路径有效性检查
+		ss = dentry_path_raw(dentry, fname, 8192);
+		if (ss) { // 路径有效性检查
 			struct super_block *sb = dentry->d_inode->i_sb;
 			// 安全访问文件系统类型名称
 			if (sb && sb->s_type && sb->s_type->name) {
